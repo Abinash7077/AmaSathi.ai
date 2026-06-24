@@ -1,0 +1,9 @@
+# backend
+cd backend && pip install -r requirements.txt
+export GEMINI_API_KEY="your_key"
+uvicorn main:app --reload --port 8000
+
+# frontend (new terminal)
+cd frontend && npm install
+cp .env.local.example .env.local
+npm run dev
