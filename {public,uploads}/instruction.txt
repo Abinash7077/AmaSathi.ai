@@ -20,7 +20,8 @@ RazorpayNo monthly fee2% per transaction
 Vercel (frontend)Free$20/month
 Railway (backend)$5/monthscales up
 Resend (email)3000 emails/month free$20/month
-
+GOOGLE_CLIENT_ID=your_google_client_id
+GOOGLE_CLIENT_SECRET=your_google_client_secret
 //
 amasathi-v2/
 │
