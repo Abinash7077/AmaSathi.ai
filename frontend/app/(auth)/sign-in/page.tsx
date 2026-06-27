@@ -1,11 +1,11 @@
 // FILE: frontend/app/(auth)/sign-in/page.tsx
 "use client";
-import { useState, useEffect } from "react";
+import { Suspense,useState, useEffect } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { signIn, googleLoginUrl } from "@/lib/auth";
 
-export default function SignInPage() {
+function SignInContent() {
   const router  = useRouter();
   const params  = useSearchParams();
   const [form, setForm]     = useState({ email: "", password: "" });
@@ -104,4 +104,12 @@ export default function SignInPage() {
       `}</style>
     </div>
   );
+}
+
+export default function SignInPage() {
+   return (
+      <Suspense fallback={<div>Loading...</div>}>
+         <SignInContent />
+      </Suspense>
+   );
 }

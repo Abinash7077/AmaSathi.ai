@@ -1,10 +1,10 @@
 // FILE: frontend/app/auth/callback/page.tsx
 "use client";
-import { useEffect } from "react";
+import { Suspense,useEffect } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { saveToken, fetchMe } from "@/lib/auth";
 
-export default function AuthCallbackPage() {
+function AuthCallbackContent() {
   const router = useRouter();
   const params = useSearchParams();
 
@@ -46,4 +46,11 @@ export default function AuthCallbackPage() {
       <div style={{ color: "rgba(255,255,255,0.4)", fontSize: 14 }}>Please wait a moment</div>
     </div>
   );
+}
+export default function AuthCallbackPage() {
+   return (
+      <Suspense fallback={<div>Loading...</div>}>
+         <AuthCallbackContent />
+      </Suspense>
+   );
 }

@@ -1,9 +1,9 @@
 "use client";
-import { useState } from "react";
+import { Suspense,useState } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 
-export default function ConfirmEmailPage() {
+function ConfirmEmailContent() {
   const params = useSearchParams();
   const router = useRouter();
   const email = params.get("email") || "";
@@ -64,4 +64,11 @@ export default function ConfirmEmailPage() {
       `}</style>
     </div>
   );
+}
+export default function ConfirmEmailPage() {
+   return (
+      <Suspense fallback={<div>Loading...</div>}>
+         <ConfirmEmailContent />
+      </Suspense>
+   );
 }

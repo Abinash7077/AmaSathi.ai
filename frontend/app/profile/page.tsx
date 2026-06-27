@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { Suspense,useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Header from "@/components/Header";
 import { getUser, fetchMe } from "@/lib/auth";
@@ -30,7 +30,7 @@ const COURSE_OPTIONS = [
   { label: "College – BCom 3rd Year",     category: "College",       level: "BCom 3rd Year" },
 ];
 
-export default function ProfilePage() {
+function ProfileContent() {
   const router = useRouter();
   const params = useSearchParams();
   const [user, setUser] = useState<any>(null);
@@ -232,4 +232,12 @@ useEffect(() => {
       `}</style>
     </div>
   );
+}
+
+export default function ProfilePage() {
+   return (
+      <Suspense fallback={<div>Loading...</div>}>
+         <ProfileContent />
+      </Suspense>
+   );
 }
