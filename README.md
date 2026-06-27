@@ -1,4 +1,4 @@
-# Sahayak - GNM Nursing Assistant
+# amasathi - GNM Nursing Assistant
 
 AI study assistant for GNM Nursing and Intermediate Physics students.
 Students capture/upload an image, PDF, or video of a topic, and can:

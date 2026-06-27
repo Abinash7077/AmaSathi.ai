@@ -1,6 +1,7 @@
 "use client";
 import { useState, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
+import { getUser, fetchMe } from "@/lib/auth";
 
 const COURSE_OPTIONS = [
   { label: "School – Class 8", category: "School", level: "Class 8" },
@@ -52,10 +53,14 @@ export default function OnboardingPage() {
   const [user, setUser] = useState<any>(null);
 
   useEffect(() => {
-    const u = localStorage.getItem("sahayak_current");
-    if (!u) { router.push("/sign-in"); return; }
-    setUser(JSON.parse(u));
-  }, []);
+  const u = getUser();
+  if (!u) { router.push("/sign-in"); return; }
+  try {
+    setUser(typeof u === "string" ? JSON.parse(u) : u);
+  } catch {
+    router.push("/sign-in");
+  }
+}, []);
 
   useEffect(() => {
     setFiltered(
@@ -71,25 +76,48 @@ export default function OnboardingPage() {
     setShowDrop(false);
   };
 
-  const finish = () => {
-    if (!user) return;
-    const updated = {
-      ...user,
+  const finish = async () => {
+  if (!user) return;
+  const token = localStorage.getItem("amasathi_token") || "";
+
+  // ✅ Update localStorage FIRST before anything else
+  const updated = {
+    ...user,
+    mobile,
+    college,
+    subject,
+    course_category: selected?.category || "",
+    course_level:    selected?.level || "",
+    plan,
+    onboarded: true,
+  };
+  localStorage.setItem("amasathi_current", JSON.stringify(updated));
+
+  // Then call API in background (don't block navigation on it)
+  fetch(`${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"}/api/profile`, {
+    method: "PUT",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      name:            user.name,
       mobile,
       college,
       subject,
-      category: selected?.category || "",
-      level: selected?.level || "",
-      plan,
-      onboarded: true,
-    };
-    localStorage.setItem("sahayak_current", JSON.stringify(updated));
-    const users = JSON.parse(localStorage.getItem("sahayak_users") || "[]");
-    const idx = users.findIndex((u: any) => u.email === user.email);
-    if (idx !== -1) users[idx] = updated;
-    localStorage.setItem("sahayak_users", JSON.stringify(users));
+      course_category: selected?.category || "",
+      course_level:    selected?.level || "",
+      onboarded:       true,
+    }),
+  }).catch(e => console.error("Profile save failed", e));
+
+  // Navigate immediately — localStorage already has onboarded: true
+  if (plan === "free") {
     router.push("/dashboard");
-  };
+  } else {
+    router.push(`/payment?plan=${plan}`);
+  }
+};
 
   return (
     <div className="ob-bg">
@@ -111,7 +139,7 @@ export default function OnboardingPage() {
         {step === 0 && (
           <div className="step-content">
             <h2>📚 What are you studying?</h2>
-            <p className="step-desc">Sahayak will personalise everything based on your course</p>
+            <p className="step-desc">amasathi will personalise everything based on your course</p>
 
             <div className="autocomplete-wrap" ref={dropRef}>
               <input
@@ -152,7 +180,7 @@ export default function OnboardingPage() {
         {step === 1 && (
           <div className="step-content">
             <h2>👤 Tell us about yourself</h2>
-            <p className="step-desc">This helps Sahayak address you properly</p>
+            <p className="step-desc">This helps amasathi address you properly</p>
 
             <div className="field">
               <label>Mobile Number</label>

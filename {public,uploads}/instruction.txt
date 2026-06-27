@@ -22,7 +22,7 @@ Railway (backend)$5/monthscales up
 Resend (email)3000 emails/month free$20/month
 
 //
-sahayak-v2/
+amasathi-v2/
 │
 ├── README.md                          ← Setup guide
 │
@@ -64,7 +64,7 @@ sahayak-v2/
         │   ├── page.tsx               ← Home with feature cards
         │   ├── translate/page.tsx     ← Translate to Odia
         │   ├── questions/page.tsx     ← Generate questions
-        │   ├── chat/page.tsx          ← Ask Sahayak chat
+        │   ├── chat/page.tsx          ← Ask amasathi chat
         │   └── video/page.tsx         ← Video summary
         │
         ├── profile/

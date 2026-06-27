@@ -2,6 +2,7 @@
 import { useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Header from "@/components/Header";
+import { getUser, fetchMe } from "@/lib/auth";
 
 const COURSE_OPTIONS = [
   { label: "School – Class 8",            category: "School",        level: "Class 8" },
@@ -47,19 +48,31 @@ export default function ProfilePage() {
   const [showDrop, setShowDrop] = useState(false);
   const [plan, setPlan]       = useState("free");
 
-  useEffect(() => {
-    const u = localStorage.getItem("sahayak_current");
-    if (!u) { router.push("/sign-in"); return; }
-    const parsed = JSON.parse(u);
-    setUser(parsed);
-    setName(parsed.name || "");
-    setMobile(parsed.mobile || "");
-    setCollege(parsed.college || "");
-    setSubject(parsed.subject || "");
-    setPlan(parsed.plan || "free");
-    const match = COURSE_OPTIONS.find(o => o.category === parsed.category && o.level === parsed.level);
+useEffect(() => {
+  const u = getUser();
+  if (!u) { router.push("/sign-in"); return; }
+  const token = localStorage.getItem("amasathi_token") || "";
+  
+  // Fetch fresh from DB
+  fetch(`${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"}/api/auth/me`, {
+    headers: { Authorization: `Bearer ${token}` }
+  })
+  .then(r => r.json())
+  .then(me => {
+    if (me.detail) { router.push("/sign-in"); return; }
+    const merged = { ...u, ...me };
+    setUser(merged);
+    setName(merged.name || "");
+    setMobile(merged.mobile || "");
+    setCollege(merged.college || "");
+    setSubject(merged.subject || "");
+    setPlan(merged.plan || "free");
+    const match = COURSE_OPTIONS.find(o => 
+      o.category === merged.course_category && o.level === merged.course_level
+    );
     if (match) { setSelected(match); setQuery(match.label); }
-  }, []);
+  });
+}, []);
 
   useEffect(() => {
     setFiltered(
@@ -68,35 +81,41 @@ export default function ProfilePage() {
     );
   }, [query]);
 
-  const saveProfile = () => {
-    const updated = { ...user, name, mobile, college, subject, category: selected?.category || user.category, level: selected?.level || user.level };
-    localStorage.setItem("sahayak_current", JSON.stringify(updated));
-    const users = JSON.parse(localStorage.getItem("sahayak_users") || "[]");
-    const idx = users.findIndex((u: any) => u.email === user.email);
-    if (idx !== -1) users[idx] = updated;
-    localStorage.setItem("sahayak_users", JSON.stringify(users));
-    setUser(updated);
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2500);
+  const saveProfile = async () => {
+  const token = localStorage.getItem("amasathi_token") || "";
+  await fetch(`${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"}/api/profile`, {
+    method: "PUT",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      name,
+      mobile,
+      college,
+      subject,
+      course_category: selected?.category || user.course_category,
+      course_level:    selected?.level    || user.course_level,
+      onboarded: true,
+    }),
+  });
+  const updated = { ...user, name, mobile, college, subject,
+    course_category: selected?.category || user.course_category,
+    course_level: selected?.level || user.course_level,
   };
+  localStorage.setItem("amasathi_current", JSON.stringify(updated));
+  setUser(updated);
+  setSaved(true);
+  setTimeout(() => setSaved(false), 2500);
+};
 
   const savePlan = () => {
-    const updated = { ...user, plan };
-    localStorage.setItem("sahayak_current", JSON.stringify(updated));
-    const users = JSON.parse(localStorage.getItem("sahayak_users") || "[]");
-    const idx = users.findIndex((u: any) => u.email === user.email);
-    if (idx !== -1) users[idx] = updated;
-    localStorage.setItem("sahayak_users", JSON.stringify(users));
-    setUser(updated);
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2500);
-  };
+  if (plan === user.plan) return; // no change
+  if (plan === "free") return;    // can't downgrade here
+  router.push(`/payment?plan=${plan}`);
+};
 
   if (!user) return null;
 
   return (
     <div style={{ minHeight: "100vh", background: "linear-gradient(135deg,#0f2027,#203a43,#2c5364)" }}>
-      <Header />
       <div className="profile-wrap">
         <h1 className="profile-title">⚙️ Account Settings</h1>
 

@@ -1,6 +1,7 @@
 "use client";
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
+import { getUser, fetchMe } from "@/lib/auth";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -13,11 +14,10 @@ export default function VideoPage() {
   const [error, setError] = useState("");
 
   useEffect(() => {
-    const u = localStorage.getItem("sahayak_current");
+const u = getUser();
     if (!u) { router.push("/sign-in"); return; }
-    const parsed = JSON.parse(u);
-    if (parsed.plan !== "pro") { router.push("/profile?tab=plan"); return; }
-    setUser(parsed);
+    if (u.plan !== "pro") { router.push("/profile?tab=plan"); return; }
+    setUser(u);
   }, []);
 
   const submit = async () => {

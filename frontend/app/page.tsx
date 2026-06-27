@@ -4,14 +4,14 @@ const features = [
   { href: "/translate", title: "Translate to Odia", emoji: "🌐", desc: "Upload a topic, get a line-by-line Odia translation." },
   { href: "/questions", title: "Generate Questions", emoji: "📝", desc: "Turn any topic image/PDF into practice questions." },
   { href: "/video", title: "Video Summary", emoji: "🎬", desc: "Upload a lecture video, get a timestamped summary." },
-  { href: "/chat", title: "Ask Sahayak", emoji: "💬", desc: "General doubt-solving assistant, text or file based." },
+  { href: "/chat", title: "Ask amasathi", emoji: "💬", desc: "General doubt-solving assistant, text or file based." },
 ];
 
 export default function HomePage() {
   return (
     <main>
       <header className="mb-8 text-center">
-        <h1 className="text-2xl font-bold text-brand-700">🩺 Sahayak</h1>
+        <h1 className="text-2xl font-bold text-brand-700">🎓 amasathi</h1>
         <p className="text-slate-600 mt-1">
           AI study assistant for GNM Nursing & Intermediate Physics students
         </p>

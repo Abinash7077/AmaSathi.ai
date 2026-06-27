@@ -1,29 +1,24 @@
-// FILE: frontend/app/(auth)/sign-in/page.tsx
+// FILE: frontend/app/(auth)/sign-up/page.tsx
 "use client";
-import { useState, useEffect } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useState } from "react";
+import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { signIn, googleLoginUrl } from "@/lib/auth";
+import { signUp, googleLoginUrl } from "@/lib/auth";
 
-export default function SignInPage() {
-  const router  = useRouter();
-  const params  = useSearchParams();
-  const [form, setForm]     = useState({ email: "", password: "" });
+export default function SignUpPage() {
+  const router = useRouter();
+  const [form, setForm] = useState({ name: "", email: "", password: "", confirm: "" });
   const [error, setError]   = useState("");
-  const [success, setSuccess] = useState("");
   const [loading, setLoading] = useState(false);
-
-  useEffect(() => {
-    if (params.get("reset"))      setSuccess("Password reset successfully! Please sign in.");
-    if (params.get("registered")) setSuccess("Account created! Please sign in.");
-  }, [params]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setError(""); setSuccess("");
+    setError("");
+    if (form.password !== form.confirm) { setError("Passwords do not match"); return; }
+    if (form.password.length < 6) { setError("Password must be at least 6 characters"); return; }
     setLoading(true);
     try {
-      const user = await signIn(form.email, form.password);
+      const user = await signUp(form.name, form.email, form.password);
       router.push(user.onboarded ? "/dashboard" : "/onboarding");
     } catch (e: any) {
       setError(e.message);
@@ -36,13 +31,12 @@ export default function SignInPage() {
     <div className="auth-bg">
       <div className="auth-card">
         <div className="auth-logo">🎓</div>
-        <h1 className="auth-title">Welcome Back</h1>
-        <p className="auth-sub">Sign in to continue learning with amasathi</p>
+        <h1 className="auth-title">Join amasathi</h1>
+        <p className="auth-sub">Your AI study friend for nursing & science</p>
 
-        {success && <div className="auth-success">{success}</div>}
-        {error   && <div className="auth-error">{error}</div>}
+        {error && <div className="auth-error">{error}</div>}
 
-        {/* Google OAuth */}
+        {/* Google OAuth Button */}
         <a href={googleLoginUrl()} className="google-btn">
           <svg width="18" height="18" viewBox="0 0 48 48">
             <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/>
@@ -53,9 +47,14 @@ export default function SignInPage() {
           Continue with Google
         </a>
 
-        <div className="divider"><span>or sign in with email</span></div>
+        <div className="divider"><span>or sign up with email</span></div>
 
         <form onSubmit={handleSubmit} className="auth-form">
+          <div className="field">
+            <label>Full Name</label>
+            <input type="text" placeholder="Enter your full name" required
+              value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} />
+          </div>
           <div className="field">
             <label>Email Address</label>
             <input type="email" placeholder="Enter your email" required
@@ -63,16 +62,20 @@ export default function SignInPage() {
           </div>
           <div className="field">
             <label>Password</label>
-            <input type="password" placeholder="Enter your password" required
+            <input type="password" placeholder="Min 6 characters" required
               value={form.password} onChange={e => setForm({ ...form, password: e.target.value })} />
-            <Link href="/forgot-password" className="forgot-link">Forgot password?</Link>
+          </div>
+          <div className="field">
+            <label>Confirm Password</label>
+            <input type="password" placeholder="Repeat your password" required
+              value={form.confirm} onChange={e => setForm({ ...form, confirm: e.target.value })} />
           </div>
           <button type="submit" className="auth-btn" disabled={loading}>
-            {loading ? "Signing in..." : "Sign In →"}
+            {loading ? "Creating account..." : "Create Account →"}
           </button>
         </form>
 
-        <p className="auth-switch">Don't have an account? <Link href="/sign-up">Sign up free</Link></p>
+        <p className="auth-switch">Already have an account? <Link href="/sign-in">Sign in</Link></p>
       </div>
 
       <style jsx>{`
@@ -82,7 +85,6 @@ export default function SignInPage() {
         .auth-title { color:#fff; font-size:28px; font-weight:700; text-align:center; margin:0 0 8px; }
         .auth-sub { color:rgba(255,255,255,0.5); text-align:center; margin:0 0 24px; font-size:14px; }
         .auth-error { background:rgba(255,80,80,0.15); border:1px solid rgba(255,80,80,0.3); color:#ff8080; padding:12px 16px; border-radius:12px; margin-bottom:16px; font-size:14px; }
-        .auth-success { background:rgba(74,222,128,0.15); border:1px solid rgba(74,222,128,0.3); color:#4ade80; padding:12px 16px; border-radius:12px; margin-bottom:16px; font-size:14px; }
         .google-btn { display:flex; align-items:center; justify-content:center; gap:10px; background:rgba(255,255,255,0.08); border:1px solid rgba(255,255,255,0.15); border-radius:12px; padding:13px; color:#fff; font-size:15px; font-weight:600; text-decoration:none; transition:all 0.2s; }
         .google-btn:hover { background:rgba(255,255,255,0.14); border-color:rgba(255,255,255,0.3); }
         .divider { display:flex; align-items:center; gap:12px; margin:20px 0; }
@@ -94,9 +96,7 @@ export default function SignInPage() {
         .field input { background:rgba(255,255,255,0.08); border:1px solid rgba(255,255,255,0.15); border-radius:12px; padding:14px 16px; color:#fff; font-size:15px; outline:none; transition:border 0.2s; }
         .field input:focus { border-color:#4ade80; }
         .field input::placeholder { color:rgba(255,255,255,0.3); }
-        .forgot-link { color:rgba(255,255,255,0.35); font-size:12px; text-decoration:none; text-align:right; margin-top:2px; }
-        .forgot-link:hover { color:#4ade80; }
-        .auth-btn { margin-top:4px; background:linear-gradient(135deg,#4ade80,#22c55e); color:#0f2027; font-weight:700; font-size:16px; padding:16px; border:none; border-radius:14px; cursor:pointer; transition:opacity 0.2s; width:100%; }
+        .auth-btn { margin-top:8px; background:linear-gradient(135deg,#4ade80,#22c55e); color:#0f2027; font-weight:700; font-size:16px; padding:16px; border:none; border-radius:14px; cursor:pointer; transition:opacity 0.2s; width:100%; }
         .auth-btn:hover { opacity:0.9; }
         .auth-btn:disabled { opacity:0.6; cursor:not-allowed; }
         .auth-switch { color:rgba(255,255,255,0.5); text-align:center; margin-top:24px; font-size:14px; }
