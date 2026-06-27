@@ -1,7 +1,6 @@
 "use client";
-import { useState, useEffect } from "react";
+import {Suspense, useState, useEffect } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { supabase, getCurrentProfile } from "@/lib/supabase";
 import { apiPost } from "@/lib/api";
 import { getUser, fetchMe } from "@/lib/auth";
 
@@ -12,7 +11,7 @@ const PLANS: Record<string, { name: string; price: number; features: string[] }>
   pro:   { name: "Pro",    price: 499, features: ["All Basic features", "Video Summary", "Unlimited requests", "Priority support"] },
 };
 
-export default function PaymentPage() {
+function PaymentContent() {
   const router   = useRouter();
   const params   = useSearchParams();
   const planId   = params.get("plan") || "basic";
@@ -136,4 +135,11 @@ const u = getUser();
       `}</style>
     </div>
   );
+}
+export default function PaymentPage() {
+   return (
+      <Suspense fallback={<div>Loading...</div>}>
+         <PaymentContent />
+      </Suspense>
+   );
 }
