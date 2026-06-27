@@ -3,7 +3,7 @@
 import { useState } from "react";
 import FileDropzone from "@/components/FileDropzone";
 import ResultView from "@/components/ResultView";
-import { callVideoSummary } from "@/lib/api";
+//import { callVideoSummary } from "@/lib/api";
 
 export default function VideoPage() {
   const [file, setFile] = useState<File | null>(null);
@@ -17,8 +17,8 @@ export default function VideoPage() {
     setError(null);
     setResult(null);
     try {
-      const text = await callVideoSummary(file);
-      setResult(text);
+      //const text = await callVideoSummary(file);
+      //setResult(text);
     } catch (e: any) {
       setError("Something went wrong. Try a shorter video or check your connection.");
     } finally {

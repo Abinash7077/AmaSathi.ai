@@ -3,7 +3,7 @@
 import { useState } from "react";
 import FileDropzone from "@/components/FileDropzone";
 import ResultView from "@/components/ResultView";
-import { callTranslate } from "@/lib/api";
+//import { callTranslate } from "@/lib/api";
 
 export default function TranslatePage() {
   const [file, setFile] = useState<File | null>(null);
@@ -17,8 +17,8 @@ export default function TranslatePage() {
     setError(null);
     setResult(null);
     try {
-      const text = await callTranslate(file);
-      setResult(text);
+      //const text = await callTranslate(file);
+      //setResult(text);
     } catch (e: any) {
       setError("Something went wrong. Please try again.");
     } finally {

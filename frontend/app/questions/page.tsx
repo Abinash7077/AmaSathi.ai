@@ -3,7 +3,7 @@
 import { useState } from "react";
 import FileDropzone from "@/components/FileDropzone";
 import ResultView from "@/components/ResultView";
-import { callQuestions } from "@/lib/api";
+//import { callQuestions } from "@/lib/api";
 
 export default function QuestionsPage() {
   const [file, setFile] = useState<File | null>(null);
@@ -18,8 +18,8 @@ export default function QuestionsPage() {
     setError(null);
     setResult(null);
     try {
-      const text = await callQuestions(file, difficulty);
-      setResult(text);
+      //const text = await callQuestions(file, difficulty);
+      //setResult(text);
     } catch (e: any) {
       setError("Something went wrong. Please try again.");
     } finally {
