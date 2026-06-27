@@ -22,7 +22,8 @@ from fastapi.responses import JSONResponse
 from google import genai
 from google.genai import types
 from dotenv import load_dotenv
-load_dotenv()  # loads .env into os.environ
+load_dotenv()
+
 # ---------------------------------------------------------------------------
 # Setup
 # ---------------------------------------------------------------------------
@@ -33,18 +34,17 @@ if not GEMINI_API_KEY:
 
 client = genai.Client(api_key=GEMINI_API_KEY)
 
-MODEL_FLASH = "gemini-2.5-flash"   # fast, cheap, good for most tasks
-MODEL_PRO = "gemini-2.5-pro"       # better reasoning, used for long video/pdf analysis
+MODEL_FLASH = "gemini-2.5-flash"
+MODEL_PRO = "gemini-2.5-pro"
 
 UPLOAD_DIR = "uploads"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 app = FastAPI(title="GNM Nursing Assistant API")
 
-# Allow the Next.js dev server (and your deployed frontend) to call this API.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # tighten this to your real frontend domain in production
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -68,7 +68,6 @@ MIME_BY_EXT = {
 
 
 def save_upload(file: UploadFile) -> str:
-    """Save an incoming upload to disk and return the local path."""
     ext = os.path.splitext(file.filename or "")[1].lower()
     if ext not in MIME_BY_EXT:
         raise HTTPException(400, f"Unsupported file type: {ext or 'unknown'}")
@@ -80,22 +79,15 @@ def save_upload(file: UploadFile) -> str:
 
 
 def upload_to_gemini(local_path: str, mime_type: str):
-    """Upload a file to Gemini's File API and wait until it's ACTIVE
-    (only videos/large PDFs need the wait; images return active immediately)."""
-    # CORRECT for 0.3.0
     uploaded = client.files.upload(path=local_path, config={"mime_type": mime_type})
-
-    # Poll until processing finishes (mainly relevant for video)
     f = client.files.get(name=uploaded.name)
     waited = 0
     while f.state == "PROCESSING" and waited < 120:
         time.sleep(3)
         waited += 3
         f = client.files.get(name=uploaded.name)
-
     if f.state == "FAILED":
         raise HTTPException(500, "Gemini failed to process the uploaded file.")
-
     return f
 
 
@@ -105,12 +97,18 @@ def gemini_generate(model: str, system_instruction: str, parts: list, json_schem
         config_kwargs["response_mime_type"] = "application/json"
         config_kwargs["response_schema"] = json_schema
 
-    response = client.models.generate_content(
-        model=model,
-        contents=[{"role": "user", "parts": parts}],
-        config=types.GenerateContentConfig(**config_kwargs),
-    )
-    return response.text
+    try:
+        response = client.models.generate_content(
+            model=model,
+            contents=[{"role": "user", "parts": parts}],
+            config=types.GenerateContentConfig(**config_kwargs),
+        )
+        return response.text
+    except Exception as e:
+        err = str(e)
+        if "503" in err or "UNAVAILABLE" in err:
+            raise HTTPException(503, "Gemini is busy right now. Please try again in a minute.")
+        raise HTTPException(500, f"AI error: {err}")
 
 
 def file_part(gemini_file):
@@ -118,7 +116,7 @@ def file_part(gemini_file):
 
 
 # ---------------------------------------------------------------------------
-# System prompts (the "persona" of the assistant)
+# System prompts
 # ---------------------------------------------------------------------------
 
 BASE_PERSONA = (
@@ -161,12 +159,15 @@ QUESTIONS_INSTRUCTION = (
 
 CHAT_INSTRUCTION = (
     BASE_PERSONA
-    + "\n\nTASK: Answer the student's question directly and clearly. If they ask in Odia, "
-    "reply in Odia. If they ask in English, reply in English unless they ask for Odia. "
+    + "\n\nTASK: Answer the student's question directly and clearly. "
+    "IMPORTANT: Always reply in the SAME language the student used to ask. "
+    "If they write in English → reply in English. "
+    "If they write in Odia → reply in Odia. "
+    "If they write in Hindi → reply in Hindi. "
+    "Do NOT switch languages unless the student explicitly asks you to. "
     "If a file (image/PDF/video) is attached, use it as context for your answer. "
-    "Keep explanations simple, use everyday examples (especially relatable to nursing "
-    "practice or daily life in Odisha), and avoid being overly long unless the student "
-    "asks for detail."
+    "Keep explanations simple, use everyday examples relatable to students in Odisha, "
+    "and avoid being overly long unless the student asks for detail."
 )
 
 VIDEO_SUMMARY_INSTRUCTION = (
@@ -188,7 +189,6 @@ def health():
 
 @app.post("/api/translate")
 async def translate_to_odia(file: UploadFile = File(...)):
-    """Upload image/pdf/video of a topic -> line-by-line Odia translation."""
     local_path, mime_type = save_upload(file)
     try:
         gfile = upload_to_gemini(local_path, mime_type)
@@ -205,7 +205,6 @@ async def translate_to_odia(file: UploadFile = File(...)):
 
 @app.post("/api/questions")
 async def generate_questions(file: UploadFile = File(...), difficulty: str = Form("medium")):
-    """Upload image/pdf/video -> exam-style questions generated from it."""
     local_path, mime_type = save_upload(file)
     try:
         gfile = upload_to_gemini(local_path, mime_type)
@@ -222,7 +221,6 @@ async def generate_questions(file: UploadFile = File(...), difficulty: str = For
 
 @app.post("/api/video-summary")
 async def video_summary(file: UploadFile = File(...)):
-    """Upload a lecture video -> timestamped bilingual summary."""
     local_path, mime_type = save_upload(file)
     if not mime_type.startswith("video"):
         os.remove(local_path)
@@ -242,10 +240,9 @@ async def video_summary(file: UploadFile = File(...)):
 @app.post("/api/chat")
 async def chat(
     message: str = Form(...),
-    history: Optional[str] = Form(None),   # JSON string of prior turns, optional
+    history: Optional[str] = Form(None),
     file: Optional[UploadFile] = File(None),
 ):
-    """General assistant: text question, optionally with an attached file."""
     import json
 
     parts = []
@@ -264,20 +261,27 @@ async def chat(
                 prior_turns = json.loads(history)
                 for turn in prior_turns:
                     contents.append({
-                        "role": turn["role"],
-                        "parts": [{"text": turn["text"]}],
+                        "role": "model" if turn["role"] == "assistant" else "user",
+                        "parts": [{"text": turn["text"]}]
                     })
             except Exception:
                 pass
 
         contents.append({"role": "user", "parts": parts})
 
-        response = client.models.generate_content(
-            model=MODEL_FLASH,
-            contents=contents,
-            config=types.GenerateContentConfig(system_instruction=CHAT_INSTRUCTION),
-        )
-        return {"result": response.text}
+        try:
+            response = client.models.generate_content(
+                model=MODEL_FLASH,
+                contents=contents,
+                config=types.GenerateContentConfig(system_instruction=CHAT_INSTRUCTION),
+            )
+            return {"result": response.text}
+        except Exception as e:
+            err = str(e)
+            if "503" in err or "UNAVAILABLE" in err:
+                raise HTTPException(503, "Gemini is busy right now. Please try again in a minute.")
+            raise HTTPException(500, f"AI error: {err}")
+
     finally:
         if local_path:
             os.remove(local_path)

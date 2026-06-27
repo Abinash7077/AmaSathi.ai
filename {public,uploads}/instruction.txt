@@ -7,3 +7,68 @@ uvicorn main:app --reload --port 8000
 cd frontend && npm install
 cp .env.local.example .env.local
 npm run dev
+
+
+
+
+
+//
+Cost Breakdown (Starting Out)
+ServiceFree TierPaid
+Supabase50,000 users free$25/month after
+RazorpayNo monthly fee2% per transaction
+Vercel (frontend)Free$20/month
+Railway (backend)$5/monthscales up
+Resend (email)3000 emails/month free$20/month
+
+//
+sahayak-v2/
+│
+├── README.md                          ← Setup guide
+│
+├── backend/
+│   ├── main.py                        ← FastAPI app (all routes)
+│   ├── requirements.txt               ← Python dependencies
+│   ├── schema.sql                     ← Run this in Supabase SQL editor
+│   ├── .env.example                   ← Copy to .env and fill keys
+│   └── uploads/                       ← Auto-created, temp file storage
+│
+└── frontend/
+    ├── .env.local.example             ← Copy to .env.local and fill keys
+    │
+    ├── lib/
+    │   ├── supabase.ts                ← Supabase client + auth helpers
+    │   └── api.ts                     ← API call helpers (with auth header)
+    │
+    ├── components/
+    │   └── Header.tsx                 ← Nav bar with logout, plan badge
+    │
+    └── app/
+        ├── layout.tsx                 ← Root layout (no navbar here)
+        ├── globals.css                ← Global styles
+        ├── page.tsx                   ← Redirects to /sign-in
+        │
+        ├── (auth)/                    ← Auth group (no header)
+        │   ├── layout.tsx             ← Empty layout (fullscreen pages)
+        │   ├── sign-in/page.tsx       ← Login page
+        │   └── sign-up/page.tsx       ← Register page
+        │
+        ├── onboarding/
+        │   └── page.tsx               ← 3-step setup (course, details, plan)
+        │
+        ├── payment/
+        │   └── page.tsx               ← Razorpay checkout page
+        │
+        ├── dashboard/
+        │   ├── layout.tsx             ← Dashboard layout with Header
+        │   ├── page.tsx               ← Home with feature cards
+        │   ├── translate/page.tsx     ← Translate to Odia
+        │   ├── questions/page.tsx     ← Generate questions
+        │   ├── chat/page.tsx          ← Ask Sahayak chat
+        │   └── video/page.tsx         ← Video summary
+        │
+        ├── profile/
+        │   └── page.tsx               ← Edit profile + change plan
+        │
+        └── admin/
+            └── page.tsx               ← Admin dashboard (users, payments)
