@@ -14,9 +14,15 @@ function SignInContent() {
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    if (params.get("reset"))      setSuccess("Password reset successfully! Please sign in.");
-    if (params.get("registered")) setSuccess("Account created! Please sign in.");
-  }, [params]);
+  if (params.get("reset"))      setSuccess("Password reset successfully!");
+  if (params.get("registered")) setSuccess("Account created! Please sign in.");
+  
+  const reason = localStorage.getItem("amasathi_kick_reason");
+  if (reason === "session_expired") {
+    setError("You were signed out because your account was used on another device.");
+    localStorage.removeItem("amasathi_kick_reason");
+  }
+}, [params]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();

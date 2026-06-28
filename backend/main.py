@@ -373,24 +373,30 @@ async def check_token_limit(user: dict, estimated_input: int = 500):
 # Device/session limiting
 # ---------------------------------------------------------------------------
 async def register_session(user_id: str, device_id: str, device_type: str):
-    existing   = await sessions_col.find({"user_id": user_id}).to_list(100)
+    existing = await sessions_col.find({"user_id": user_id}).sort("last_seen", 1).to_list(100)
     device_ids = [s["device_id"] for s in existing]
-    if device_id not in device_ids:
-        if len(device_ids) >= MAX_DEVICES:
-            raise HTTPException(403,
-                f"Maximum {MAX_DEVICES} devices allowed. Logout from another device first."
-            )
-        await sessions_col.insert_one({
-            "user_id": user_id, "device_id": device_id,
-            "device_type": device_type,
-            "last_seen": datetime.utcnow(), "created_at": datetime.utcnow(),
-        })
-    else:
+
+    if device_id in device_ids:
+        # Known device — just update last_seen
         await sessions_col.update_one(
             {"user_id": user_id, "device_id": device_id},
             {"$set": {"last_seen": datetime.utcnow()}}
         )
+        return
 
+    # New device
+    if len(existing) >= MAX_DEVICES:
+        # Kick oldest device instead of blocking
+        oldest = existing[0]["device_id"]
+        await sessions_col.delete_one({"user_id": user_id, "device_id": oldest})
+
+    await sessions_col.insert_one({
+        "user_id": user_id,
+        "device_id": device_id,
+        "device_type": device_type,
+        "last_seen": datetime.utcnow(),
+        "created_at": datetime.utcnow(),
+    })
 # ---------------------------------------------------------------------------
 # Password
 # ---------------------------------------------------------------------------
@@ -876,6 +882,10 @@ async def google_callback(code: str):
 async def get_sessions(user: dict = Depends(get_current_user)):
     sessions = await sessions_col.find({"user_id": user["user_id"]}).to_list(10)
     return serialize(sessions)
+
+@app.get("/ping")
+def ping():
+    return {"pong": True}
 
 @app.delete("/api/auth/sessions/{device_id}")
 async def revoke_session(device_id: str, user: dict = Depends(get_current_user)):

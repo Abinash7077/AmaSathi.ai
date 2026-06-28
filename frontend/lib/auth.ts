@@ -4,6 +4,15 @@ const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 // ---------------------------------------------------------------------------
 // Token storage
 // ---------------------------------------------------------------------------
+export function getDeviceId(): string {
+  if (typeof window === "undefined") return "ssr";
+  let id = localStorage.getItem("amasathi_device_id");
+  if (!id) {
+    id = crypto.randomUUID();
+    localStorage.setItem("amasathi_device_id", id);
+  }
+  return id;
+}
 export function saveToken(token: string) {
   localStorage.setItem("amasathi_token", token);
 }
@@ -13,8 +22,11 @@ export function getToken(): string | null {
 }
 
 export function removeToken() {
+  const deviceId = getDeviceId();                     
   localStorage.removeItem("amasathi_token");
   localStorage.removeItem("amasathi_user");
+  localStorage.removeItem("amasathi_current");
+  localStorage.setItem("amasathi_device_id", deviceId); 
 }
 
 export function saveUser(user: any) {
@@ -86,8 +98,13 @@ export async function signUp(name: string, email: string, password: string) {
 }
 
 export async function signIn(email: string, password: string) {
-  debugger
-  const data = await apiPost("/api/auth/signin", { email, password });
+  const device_id = getDeviceId(); // ← get persistent device ID
+  const data = await apiPost("/api/auth/signin", { 
+    email, 
+    password,
+    device_id,              // ← send it to backend
+    device_type: "web",
+  });
   saveToken(data.token);
   saveUser(data.user);
   return data.user;
