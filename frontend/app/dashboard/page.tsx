@@ -4,14 +4,13 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { getUser, fetchMe } from "@/lib/auth";
 const FEATURES = [
-  { href: "/dashboard/translate", icon: "🌐", title: "Translate to Odia", desc: "Upload notes or textbook page — get line-by-line Odia translation instantly.", color: "#4ade80", plan: "free" },
+  { href: "/dashboard/translate", icon: "🌐", title: "Translate to Odia", desc: "Upload notes or textbook page — get line-by-line Odia translation instantly.", color: "#4ade80", plan: "basic" },
   { href: "/dashboard/questions", icon: "📝", title: "Generate Questions", desc: "Turn any topic image or PDF into exam-style practice questions.", color: "#60a5fa", plan: "basic" },
   { href: "/dashboard/video",     icon: "🎬", title: "Video Summary",     desc: "Upload a lecture video and get a timestamped bilingual summary.", color: "#f59e0b", plan: "pro" },
-  { href: "/dashboard/chat",      icon: "💬", title: "Ask amasathi",       desc: "Chat with your AI study friend — text or file-based doubts, anytime.", color: "#c084fc", plan: "basic" },
+  { href: "/dashboard/chat",      icon: "💬", title: "Ask amasathi",       desc: "Chat with your AI study friend — text or file-based doubts, anytime.", color: "#c084fc", plan: "free" },
 ];
 
-const PLAN_ORDER: Record<string, number> = { free: 0, basic: 1, pro: 2 };
-
+const PLAN_ORDER: Record<string, number> = { free: 0, basic: 1, science: 2, standard: 2, pro: 3 };
 export default function DashboardHome() {
   const router = useRouter();
   const [user, setUser] = useState<any>(null);
@@ -102,13 +101,7 @@ if (loading || !user) return (
         .welcome { margin-bottom:32px; }
         .welcome h1 { color:#fff; font-size:28px; font-weight:800; margin:0 0 6px; }
         .welcome p { color:rgba(255,255,255,0.4); font-size:15px; margin:0; }
-.grid {
-  display: grid;
-  grid-template-columns: repeat(4, 280px);
-  justify-content: center;
-  gap: 16px;
-  margin-bottom: 24px;
-}        .card { background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.08); border-radius:20px; padding:24px; display:flex; flex-direction:column; gap:16px; cursor:pointer; transition:all 0.2s; position:relative; }
+        .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:16px; margin-bottom:24px; }      .card { background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.08); border-radius:20px; padding:24px; display:flex; flex-direction:column; gap:16px; cursor:pointer; transition:all 0.2s; position:relative; }
         .card:hover:not(.locked) { border-color:rgba(255,255,255,0.2); transform:translateY(-2px); background:rgba(255,255,255,0.08); }
         .card.locked { opacity:0.5; cursor:not-allowed; }
         .card-icon { width:52px; height:52px; border-radius:14px; display:flex; align-items:center; justify-content:center; font-size:26px; }
@@ -116,8 +109,7 @@ if (loading || !user) return (
         .card-body p { color:rgba(255,255,255,0.45); font-size:14px; margin:0; line-height:1.5; }
         .lock-badge { position:absolute; top:16px; right:16px; background:rgba(255,255,255,0.08); color:rgba(255,255,255,0.4); font-size:11px; font-weight:600; padding:4px 10px; border-radius:20px; }
         .card-arrow { position:absolute; top:20px; right:20px; font-size:20px; font-weight:700; }
-        .upgrade-banner { background:linear-gradient(135deg,rgba(74,222,128,0.1),rgba(34,197,94,0.05)); border:1px solid rgba(74,222,128,0.2); border-radius:16px; padding:20px 24px; display:flex; align-items:center; justify-content:space-between; gap:16px; flex-wrap:wrap;position:absolute;bottom:20px;width:93%; }
-        .upgrade-banner strong { color:#4ade80; }
+        .upgrade-banner { background:linear-gradient(...); border:1px solid ...; border-radius:16px; padding:20px 24px; display:flex; align-items:center; justify-content:space-between; gap:16px; flex-wrap:wrap; margin-top:16px; }        .upgrade-banner strong { color:#4ade80; }
         .upgrade-banner span { color:rgba(255,255,255,0.5); font-size:14px; }
         .upgrade-btn { 
   background:linear-gradient(135deg,#4ade80,#22c55e); 
@@ -128,17 +120,6 @@ if (loading || !user) return (
   text-decoration:none; 
   font-size:14px; 
   white-space:nowrap; 
-}
-        @media (max-width: 1200px) {
-  .grid {
-    grid-template-columns: repeat(2, 280px);
-  }
-}
-
-@media (max-width: 650px) {
-  .grid {
-    grid-template-columns: 280px;
-  }
 }
       `}</style>
     </div>
