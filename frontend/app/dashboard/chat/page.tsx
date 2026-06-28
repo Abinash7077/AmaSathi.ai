@@ -4,7 +4,10 @@ import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { getUser } from "@/lib/auth";
 import ReactMarkdown from "react-markdown";
-
+// Add these imports at top
+import remarkMath from "remark-math";
+import rehypeKatex from "rehype-katex";
+import "katex/dist/katex.min.css";
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 type Msg = { role: "user" | "assistant"; text: string };
@@ -114,9 +117,12 @@ export default function ChatPage() {
             <div key={i} className={`msg ${m.role}`}>
               {m.role === "assistant" && <div className="avatar">🎓</div>}
               <div className={`bubble ${m.role}`}>
-                {m.role === "assistant"
-                  ? <ReactMarkdown>{m.text}</ReactMarkdown>
-                  : m.text}
+               {m.role === "assistant"
+                ? <ReactMarkdown
+                    remarkPlugins={[remarkMath]}
+                    rehypePlugins={[rehypeKatex]}
+                  >{m.text}</ReactMarkdown>
+                : m.text}
               </div>
               {m.role === "user" && (
                 <div className="avatar user-av">{user?.name?.[0]?.toUpperCase()}</div>

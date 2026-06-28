@@ -1,11 +1,13 @@
-# FILE: backend/main.py
 """
-amasathi - Production FastAPI Backend
+amasathi - Production FastAPI Backend v5.1
+- Per-user token limits (daily)
+- Per-user request limits (per minute + per day)
+- Hard blocks so no user can exceed their plan
 - MongoDB for users, chat history, token usage, payments
 - JWT auth + Google OAuth2
-- 4 subscription plans with token limits and expiry
-- Device/session limiting (max 2 devices per user)
-- Chat history stored in DB (not sent in payload)
+- 4 subscription plans with expiry
+- Device/session limiting (max 2 devices)
+- Chat history stored in DB
 - Admin panel with full visibility
 """
 
@@ -42,7 +44,7 @@ GEMINI_API_KEY       = os.environ.get("GEMINI_API_KEY", "")
 MONGODB_URI          = os.environ.get("MONGODB_URI", "")
 JWT_SECRET           = os.environ.get("JWT_SECRET", "changeme_32chars_minimum_please!")
 JWT_ALGORITHM        = "HS256"
-JWT_EXPIRE_MINUTES   = 60 * 24 * 7   # 7 days
+JWT_EXPIRE_MINUTES   = 60 * 24 * 7
 GOOGLE_CLIENT_ID     = os.environ.get("GOOGLE_CLIENT_ID", "")
 GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET", "")
 GOOGLE_REDIRECT_URI  = os.environ.get("GOOGLE_REDIRECT_URI", "http://localhost:8000/api/auth/google/callback")
@@ -55,50 +57,85 @@ FRONTEND_URL         = os.environ.get("FRONTEND_URL", "http://localhost:3000")
 RAZORPAY_KEY_ID      = os.environ.get("RAZORPAY_KEY_ID", "")
 RAZORPAY_KEY_SECRET  = os.environ.get("RAZORPAY_KEY_SECRET", "")
 ADMIN_EMAILS         = [e.strip() for e in os.environ.get("ADMIN_EMAILS", "").split(",")]
-MAX_DEVICES          = 2   # 1 PC + 1 mobile
+MAX_DEVICES          = 2
 
 if not GEMINI_API_KEY:
     raise RuntimeError("Set GEMINI_API_KEY")
 
 # ---------------------------------------------------------------------------
-# Plans
+# Plans — safe limits per user
 # ---------------------------------------------------------------------------
 PLANS = {
     "free": {
         "name": "Free",
         "price": 0,
         "tokens_per_day": 5_000,
+        "tokens_per_month": 60_000,
+        "requests_per_minute": 2,
+        "requests_per_day": 10,
         "features": ["translate", "chat"],
         "history": False,
         "expires_days": None,
         "max_history": 0,
     },
+
     "basic": {
         "name": "Basic",
         "price": 99,
-        "tokens_per_day": 50_000,
-        "features": ["translate", "chat", "questions"],
+        "tokens_per_day": 10_000,
+        "tokens_per_month": 300_000,
+        "requests_per_minute": 5,
+        "requests_per_day": 40,
+        "features": [
+            "translate",
+            "chat",
+            "questions",
+            "pdf",
+            "images"
+        ],
         "history": True,
         "expires_days": 30,
-        "max_history": 10,
+        "max_history": 20,
     },
+
     "standard": {
         "name": "Standard",
-        "price": 149,
-        "tokens_per_day": 1_50_000,
-        "features": ["translate", "chat", "questions", "video"],
+        "price": 199,
+        "tokens_per_day": 30_000,
+        "tokens_per_month": 900_000,
+        "requests_per_minute": 10,
+        "requests_per_day": 120,
+        "features": [
+            "translate",
+            "chat",
+            "questions",
+            "pdf",
+            "images",
+            "video"
+        ],
         "history": True,
         "expires_days": 30,
-        "max_history": 50,
+        "max_history": 100,
     },
+
     "pro": {
         "name": "Pro",
         "price": 499,
-        "tokens_per_day": 5_00_000,
-        "features": ["translate", "chat", "questions", "video"],
+        "tokens_per_day": 100_000,
+        "tokens_per_month": 3_000_000,
+        "requests_per_minute": 20,
+        "requests_per_day": 500,
+        "features": [
+            "translate",
+            "chat",
+            "questions",
+            "pdf",
+            "images",
+            "video"
+        ],
         "history": True,
         "expires_days": 30,
-        "max_history": 500,
+        "max_history": 1000,
     },
 }
 
@@ -117,22 +154,27 @@ reset_col    = db["password_resets"]
 history_col  = db["chat_history"]
 usage_col    = db["token_usage"]
 sessions_col = db["sessions"]
+requests_col = db["request_logs"]      # ← new: per-user request tracking
 
 gemini_client = genai.Client(api_key=GEMINI_API_KEY)
-MODEL_FLASH   = "gemini-2.5-flash"
+MODEL_FLASH   = "gemini-2.5-flash"    # higher free tier limits
 MODEL_PRO     = "gemini-2.5-pro"
 UPLOAD_DIR    = "uploads"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 app = FastAPI(title="amasathi API - Production")
 app.add_middleware(
-    CORSMiddleware, allow_origins=["*"],
+    CORSMiddleware, allow_origins=[
+        "http://localhost",
+        "http://localhost:3000",
+        "http://127.0.0.1:8000",
+        "https://amasathi.onrender.com",
+        "https://ama-sathi-ai.vercel.app",
+    ],
     allow_credentials=True, allow_methods=["*"], allow_headers=["*"],
 )
 
-# ── Swagger Bearer Auth ──────────────────────────────────────────────────────
 from fastapi.openapi.utils import get_openapi
-
 def custom_openapi():
     if app.openapi_schema:
         return app.openapi_schema
@@ -145,9 +187,7 @@ def custom_openapi():
             method["security"] = [{"BearerAuth": []}]
     app.openapi_schema = schema
     return schema
-
 app.openapi = custom_openapi
-# ─────────────────────────────────────────────────────────────────────────────
 
 # ---------------------------------------------------------------------------
 # Startup indexes
@@ -162,6 +202,8 @@ async def startup():
     await sessions_col.create_index("user_id")
     await sessions_col.create_index("last_seen", expireAfterSeconds=60*60*24*30)
     await payments_col.create_index("razorpay_payment_id", unique=True, sparse=True)
+    await requests_col.create_index([("user_id", 1), ("created_at", -1)])
+    await requests_col.create_index("created_at", expireAfterSeconds=60*60*24*2)  # auto-delete after 2 days
 
 # ---------------------------------------------------------------------------
 # JWT
@@ -197,7 +239,7 @@ async def require_admin(authorization: str = Header(...)) -> dict:
     return user
 
 # ---------------------------------------------------------------------------
-# Plan expiry check
+# Plan expiry
 # ---------------------------------------------------------------------------
 async def check_plan_expiry(user: dict) -> dict:
     if user.get("plan", "free") == "free":
@@ -237,32 +279,92 @@ async def add_token_usage(user_id: str, tokens: int):
 def estimate_tokens(text: str) -> int:
     return max(1, len(text) // 4)
 
+# ---------------------------------------------------------------------------
+# Rate limiting — per user, per minute + per day + token limit
+# ---------------------------------------------------------------------------
 async def check_token_limit(user: dict, estimated_input: int = 500):
     plan     = user.get("plan", "free")
     plan_cfg = PLANS.get(plan, PLANS["free"])
-    limit    = plan_cfg["tokens_per_day"]
-    used     = await get_token_usage(user["user_id"])
-    if used + estimated_input > limit:
-        raise HTTPException(429, f"Daily token limit reached ({limit:,} tokens/day on {plan_cfg['name']} plan). Upgrade or wait until tomorrow.")
+    user_id  = user["user_id"]
+
+    # 1. Check daily TOKEN limit
+    token_limit = plan_cfg["tokens_per_day"]
+    used_tokens = await get_token_usage(user_id)
+
+    if used_tokens >= token_limit:
+        ist = ZoneInfo("Asia/Kolkata")
+        now = datetime.now(ist)
+
+        # Next midnight
+        reset_time = (now + timedelta(days=1)).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
+
+        remaining = reset_time - now
+        hours = remaining.seconds // 3600
+        minutes = (remaining.seconds % 3600) // 60
+
+        raise HTTPException(
+            status_code=429,
+            detail=(
+                f"⚠️ Daily token limit reached.\n\n"
+                f"You've used {used_tokens:,}/{token_limit:,} tokens today "
+                f"on the {plan_cfg['name']} plan.\n\n"
+                f"⏰ Your limit resets in {hours}h {minutes}m "
+                f"({reset_time.strftime('%I:%M %p IST')}).\n\n"
+                f"Upgrade to Pro for more tokens."
+            )
+        )
+
+    # 2. Check per-MINUTE request limit
+    rpm_limit   = plan_cfg.get("requests_per_minute", 2)
+    one_min_ago = datetime.utcnow() - timedelta(minutes=1)
+    rpm_count   = await requests_col.count_documents({
+        "user_id":    user_id,
+        "created_at": {"$gte": one_min_ago}
+    })
+    if rpm_count >= rpm_limit:
+        raise HTTPException(429,
+            f"Slow down! Max {rpm_limit} requests/minute on the {plan_cfg['name']} plan. "
+            f"Please wait a moment before trying again."
+        )
+
+    # 3. Check per-DAY request limit
+    rpd_limit   = plan_cfg.get("requests_per_day", 10)
+    today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+    rpd_count   = await requests_col.count_documents({
+        "user_id":    user_id,
+        "created_at": {"$gte": today_start}
+    })
+    if rpd_count >= rpd_limit:
+        raise HTTPException(429,
+            f"Daily request limit reached. You've made {rpd_count}/{rpd_limit} requests today "
+            f"on the {plan_cfg['name']} plan. Resets at midnight IST."
+        )
+
+    # 4. Log this request AFTER all checks pass
+    await requests_col.insert_one({
+        "user_id":    user_id,
+        "plan":       plan,
+        "feature":    "api",
+        "created_at": datetime.utcnow(),
+    })
 
 # ---------------------------------------------------------------------------
 # Device/session limiting
 # ---------------------------------------------------------------------------
 async def register_session(user_id: str, device_id: str, device_type: str):
-    existing = await sessions_col.find({"user_id": user_id}).to_list(100)
+    existing   = await sessions_col.find({"user_id": user_id}).to_list(100)
     device_ids = [s["device_id"] for s in existing]
     if device_id not in device_ids:
         if len(device_ids) >= MAX_DEVICES:
             raise HTTPException(403,
-                f"Maximum {MAX_DEVICES} devices allowed per account. "
-                "Please logout from another device or contact support."
+                f"Maximum {MAX_DEVICES} devices allowed. Logout from another device first."
             )
         await sessions_col.insert_one({
-            "user_id":     user_id,
-            "device_id":   device_id,
+            "user_id": user_id, "device_id": device_id,
             "device_type": device_type,
-            "last_seen":   datetime.utcnow(),
-            "created_at":  datetime.utcnow(),
+            "last_seen": datetime.utcnow(), "created_at": datetime.utcnow(),
         })
     else:
         await sessions_col.update_one(
@@ -305,7 +407,7 @@ def plan_allows(plan: str, feature: str) -> bool:
     return feature in PLANS.get(plan, PLANS["free"])["features"]
 
 # ---------------------------------------------------------------------------
-# Gemini / File helpers
+# Gemini helpers
 # ---------------------------------------------------------------------------
 MIME_BY_EXT = {
     ".pdf": "application/pdf", ".png": "image/png",
@@ -344,69 +446,47 @@ def gemini_generate(model: str, system_instruction: str, parts: list) -> tuple[s
             contents=[{"role": "user", "parts": parts}],
             config=types.GenerateContentConfig(system_instruction=system_instruction),
         )
-        tokens = getattr(response, "usage_metadata", None)
-        total_tokens = 0
-        if tokens:
-            total_tokens = getattr(tokens, "total_token_count", 0)
+        tokens_meta  = getattr(response, "usage_metadata", None)
+        total_tokens = getattr(tokens_meta, "total_token_count", 0) if tokens_meta else 0
         if not total_tokens:
             total_tokens = estimate_tokens(response.text)
         return response.text, total_tokens
     except Exception as e:
         err = str(e)
         if "503" in err or "UNAVAILABLE" in err:
-            raise HTTPException(503, "Gemini is busy right now. Please try again in a minute.")
-        raise HTTPException(500, f"AI error: {err}")
+            raise HTTPException(503, "amasathi is busy. Please try again in a minute.")
+        if "429" in err or "RESOURCE_EXHAUSTED" in err:
+            raise HTTPException(429, "Service is busy. Please wait a moment and try again.")
+        raise HTTPException(500, "Something went wrong. Please try again.")
 
 # ---------------------------------------------------------------------------
-# System prompts — BASE_PERSONA must be defined before build_chat_instruction
+# System prompts
 # ---------------------------------------------------------------------------
 BASE_PERSONA = (
-    "You are 'amasathi', a friendly, patient teaching assistant for GNM "
-    "(General Nursing and Midwifery) and Intermediate Physics/Science students "
-    "in Odisha, India. Students often capture photos of textbook pages, class "
-    "notes, or diagrams with their phone camera. Your job is to help them learn, "
-    "exactly as instructed in each task below. Be accurate with medical and "
-    "scientific terms - do not invent facts."
+    "You are 'amasathi', a friendly, patient AI study assistant for students "
+    "in Odisha, India. You help students from all streams — GNM/BSc Nursing, "
+    "Intermediate Science/Arts, College BA/BSc/BCom, and School classes. "
+    "Students often send photos of textbook pages, notes or diagrams. "
+    "Your job is to help them learn and understand any subject clearly. "
+    "Be accurate — never invent facts. "
+    "Always personalise your response based on the student's course and level. "
+    "Keep responses concise and under 300 words unless the student asks for more."
 )
 
 TRANSLATE_INSTRUCTION = (
     BASE_PERSONA
-    + "\n\nTASK: The student has shared an image/PDF/video of a topic. "
-    "Translate the content line by line into Odia. Follow this EXACT format for EVERY line:\n\n"
-    "**📘 English:** <original English text>\n\n"
-    "**🔤 ଓଡ଼ିଆ:** <Odia translation>\n\n"
-    "---\n\n"
-    "Rules:\n"
-    "- ALWAYS show English first, then Odia below it, separated by a blank line\n"
-    "- NEVER put English and Odia on the same line\n"
-    "- Keep medical/technical terms in English in brackets after the Odia word\n"
-    "- Add --- separator between each line pair\n"
-    "- Do not skip any line\n"
-    "- Do not add any extra commentary\n\n"
-    "Example output:\n"
-    "**📘 English:** The pharynx is a muscular tube.\n\n"
-    "**🔤 ଓଡ଼ିଆ:** ଗ୍ରସନୀ (Pharynx) ଏକ ମାଂସପେଶୀଯୁକ୍ତ ନଳୀ।\n\n"
-    "---"
+    + "\n\nTASK: Translate the content line by line into Odia.\n\n"
+    "Format for EVERY line:\n"
+    "**📘 English:** <original text>\n\n"
+    "**🔤 ଓଡ଼ିଆ:** <Odia translation>\n\n---\n\n"
+    "Rules: Show English first, Odia below. Keep medical terms in English in brackets. Do not skip any line."
 )
 
 QUESTIONS_INSTRUCTION = (
     BASE_PERSONA
-    + "\n\nTASK: Generate practice questions from the uploaded content."
-    "\n\nFor each MCQ, use EXACTLY this format with line breaks:\n\n"
-    "**Q1. [English question text]**\n\n"
-    "[ଓଡ଼ିଆ ଅନୁବାଦ: Odia translation of the question]\n\n"
-    "(A) Option one\n\n"
-    "(B) Option two\n\n"
-    "(C) Option three\n\n"
-    "(D) Option four\n\n"
-    "✅ **Correct Answer: (X)**\n\n"
-    "---\n\n"
-    "Generate:\n"
-    "- 5 MCQs in the format above\n"
-    "- 3 Short Answer questions (English question, then Odia translation on next line)\n"
-    "- 1 Long/Descriptive question\n"
-    "IMPORTANT: Never put question, options and answer all on one line. "
-    "Each element must be on its own separate line with a blank line between them."
+    + "\n\nTASK: Generate practice questions.\n\n"
+    "MCQ format:\n**Q1. [question]**\n\n[Odia translation]\n\n(A) ...\n(B) ...\n(C) ...\n(D) ...\n\n✅ **Correct Answer: (X)**\n\n---\n\n"
+    "Generate: 5 MCQs, 3 Short Answer, 1 Long/Descriptive question."
 )
 
 VIDEO_SUMMARY_INSTRUCTION = (
@@ -415,60 +495,134 @@ VIDEO_SUMMARY_INSTRUCTION = (
     "For each segment: start-end time | English summary | Odia summary. Format as a clean list."
 )
 
-# ---------------------------------------------------------------------------
-# Student-aware instructions — uses profile fetched from DB via get_current_user
-# Called fresh on every request, so always reflects latest DB profile
-# ---------------------------------------------------------------------------
 def build_student_context(user: dict) -> str:
-    category = user.get("course_category", "")
-    level    = user.get("course_level", "")
-    college  = user.get("college", "")
-    subject  = user.get("subject", "")
-    name     = user.get("name", "Student")
-    return f"""
-STUDENT PROFILE (fetched from DB — use this to personalise every response):
-- Name: {name}
-- Course: {category} – {level}
-- College/School: {college or "Not specified"}
-- Subject focus: {subject or "General"}
-
-PERSONALISATION RULES:
-- Always address the student by name: {name}
-- Tailor depth and language to {level} level
-- GNM/BSc Nursing → clinical focus, medical terms, patient care examples
-- Intermediate Class 11/12 Science → CHSE Odisha syllabus, Physics/Chemistry/Biology
-- School Class 8-10 → very simple language, everyday relatable examples
-- College BA/BSc/BCom → university-level concepts for Odisha universities
-- Always use Odisha context in examples where possible (rivers, cities, festivals, food)
-"""
+    return (
+        f"\n\nSTUDENT: {user.get('name','Student')} | "
+        f"Course: {user.get('course_category','')} {user.get('course_level','')} | "
+        f"College: {user.get('college','') or 'Not specified'} | "
+        f"Subject: {user.get('subject','') or 'General'}\n"
+        f"Personalise responses for this student's level and use Odisha context in examples."
+    )
 
 def build_chat_instruction(user: dict) -> str:
     return (
-        BASE_PERSONA
-        + build_student_context(user)
-        + "\n\nTASK: Answer the student's question directly and clearly. "
-        "IMPORTANT: Always reply in the SAME language the student used. "
-        "English → English. Odia → Odia. Hindi → Hindi. "
-        "Do NOT switch languages unless explicitly asked. "
-        "Keep explanations simple and relatable."
-    )
+        BASE_PERSONA + build_student_context(user)
+        + "\n\nTASK: Answer directly and clearly. "
+        "Reply in the SAME language the student used (English/Odia/Hindi).\n\n"
 
-def build_questions_instruction(user: dict) -> str:
-    return (
-        QUESTIONS_INSTRUCTION
-        + build_student_context(user)
-        + f"\nGenerate questions appropriate for {user.get('course_category','')} – {user.get('course_level','')} level."
+        "MOST IMPORTANT: Match answer depth to student level from profile above.\n"
+        "Class 8-10 → simple, short, daily life examples\n"
+        "Class 11-12 → board exam level, medium detail\n"
+        "BSc/BA/BCom 1st year → university level, more theory\n"
+        "BSc/BA/BCom 2nd-3rd year → advanced, deep explanation\n"
+        "GNM 1st year → basic nursing, simple clinical\n"
+        "GNM 2nd-3rd year → advanced clinical, pharmacology\n"
+        "BSc Nursing → full clinical, medical terminology\n"
+        "NEVER over-explain to lower classes. NEVER under-explain to higher classes.\n\n"
+
+        "RESPONSE RULES — follow based on what is asked:\n\n"
+
+        "1. CHEMISTRY — structure/molecule/compound:\n"
+        "   ALWAYS draw in a code block so spacing is preserved:\n"
+        "   ```\n"
+        "        H\n"
+        "        |\n"
+        "    H - C - H     (Methane, CH₄)\n"
+        "        |\n"
+        "        H\n"
+        "   ```\n"
+        "   After the diagram explain:\n"
+        "   - Formula: CH₄\n"
+        "   - Central atom: Carbon (C)\n"
+        "   - Bond type: 4 single C-H covalent bonds\n"
+        "   - How to draw: Place C in center → attach H on Top, Bottom, Left, Right\n"
+        "   - Bond angle: 109.5° (tetrahedral)\n\n"
+
+        "   For RING structures (Benzene, Ferrocene, Cyclopentadiene):\n"
+        "   ```\n"
+        "         H   H\n"
+        "          \\ /\n"
+        "      H - C   C - H\n"
+        "           \\ /\n"
+        "            C\n"
+        "            |         ← top ring\n"
+        "   ~~~~~~~~~~~~~~~~~\n"
+        "          Fe          ← metal center\n"
+        "   ~~~~~~~~~~~~~~~~~\n"
+        "            C\n"
+        "           / \\\n"
+        "      H - C   C - H\n"
+        "           / \\\n"
+        "          H   H       ← bottom ring\n"
+        "   ```\n"
+        "   After diagram explain:\n"
+        "   - Which atoms connect to which\n"
+        "   - Bond type at each connection\n"
+        "   - How to draw step by step\n\n"
+
+        "   For ORGANIC chains (Ethane, Propane, Ethanol etc):\n"
+        "   ```\n"
+        "    H   H\n"
+        "    |   |\n"
+        "H - C - C - H     (Ethane, C₂H₆)\n"
+        "    |   |\n"
+        "    H   H\n"
+        "   ```\n"
+        "   Explain each bond after the diagram.\n\n"
+
+        "2. CHEMISTRY — reaction:\n"
+        "   Show in code block:\n"
+        "   ```\n"
+        "   2H₂  +  O₂  ──(spark)──→  2H₂O\n"
+        "   ```\n"
+        "   Then explain: what breaks, what forms, conditions needed.\n\n"
+
+        "3. PHYSICS — circuit/diagram/force:\n"
+        "   Draw ASCII + formula + solved example:\n"
+        "   F→  [Block]  ←friction\n"
+        "         ↓\n"
+        "        mg\n\n"
+
+        "4. MATHEMATICS:\n"
+        "   Always step-by-step:\n"
+        "   Given → Formula → Step 1 → Step 2 → Answer (with units)\n\n"
+
+        "5. NURSING/MEDICAL:\n"
+        "   Flow + clinical significance + patient care tip:\n"
+        "   Body → RA → RV → Lungs → LA → LV → Body\n\n"
+
+        "6. ESSAY/LONG ANSWER:\n"
+        "   Introduction → Main Points → Conclusion\n\n"
+
+        "7. PROCESS/FLOW:\n"
+        "   Step1 → Step2 → Step3 → Result\n\n"
+
+        "8. HISTORY/GEOGRAPHY:\n"
+        "   Date/Place → Event → Impact. Use Odisha examples.\n\n"
+
+        "9. ARTS/COMMERCE:\n"
+        "   Clear bullet points, simple language, local examples.\n\n"
+
+        "GOLDEN RULES:\n"
+        "- Match depth to student level — not too simple, not too complex\n"
+        "- If it CAN be drawn → draw it in ASCII\n"
+        "- If it needs calculation → solve step by step\n"
+        "- If it needs essay → structure it properly\n"
+        "- Never give extra unnecessary information\n"
+        "- Be a helpful study friend, not a textbook\n"
     )
 
 def build_translate_instruction(user: dict) -> str:
+    return TRANSLATE_INSTRUCTION + build_student_context(user)
+
+def build_questions_instruction(user: dict) -> str:
     return (
-        TRANSLATE_INSTRUCTION
-        + build_student_context(user)
-        + f"\nKeep translations relevant to {user.get('course_category','')} – {user.get('course_level','')} level."
+        QUESTIONS_INSTRUCTION + build_student_context(user)
+        + f"\nGenerate questions for {user.get('course_category','')} {user.get('course_level','')} level."
     )
 
 # ---------------------------------------------------------------------------
-# Serializer helper
+# Serializer
 # ---------------------------------------------------------------------------
 def serialize(obj):
     if isinstance(obj, ObjectId): return str(obj)
@@ -482,11 +636,11 @@ def serialize(obj):
 # ---------------------------------------------------------------------------
 @app.get("/health")
 def health():
-    return {"status": "ok", "version": "5.0-production"}
+    return {"status": "ok", "version": "5.1-production"}
 
 @app.get("/api/plans")
 def get_plans():
-    return {k: {**v, "features": v["features"]} for k, v in PLANS.items()}
+    return {k: {**v} for k, v in PLANS.items()}
 
 # ---------------------------------------------------------------------------
 # Auth — Signup
@@ -528,8 +682,8 @@ async def signup(body: dict):
 # ---------------------------------------------------------------------------
 @app.post("/api/auth/signin")
 async def signin(body: dict, request: Request):
-    email    = body.get("email", "").strip().lower()
-    password = body.get("password", "")
+    email       = body.get("email", "").strip().lower()
+    password    = body.get("password", "")
     device_id   = body.get("device_id", str(uuid.uuid4()))
     device_type = body.get("device_type", "web")
 
@@ -541,9 +695,8 @@ async def signin(body: dict, request: Request):
     if not verify_password(password, user.get("password", "")):
         raise HTTPException(401, "Invalid email or password")
 
-    user = await check_plan_expiry(user)
+    user  = await check_plan_expiry(user)
     await register_session(str(user["_id"]), device_id, device_type)
-
     token = create_token(str(user["_id"]), email)
     return {
         "token": token,
@@ -582,7 +735,7 @@ async def forgot_password(body: dict):
 
 @app.post("/api/auth/reset-password")
 async def reset_password(body: dict):
-    token = body.get("token", "")
+    token        = body.get("token", "")
     new_password = body.get("password", "")
     if len(new_password) < 6:
         raise HTTPException(400, "Password must be at least 6 characters")
@@ -601,13 +754,19 @@ async def reset_password(body: dict):
 # ---------------------------------------------------------------------------
 @app.get("/api/auth/me")
 async def get_me(user: dict = Depends(get_current_user)):
-    plan     = user.get("plan", "free")
-    plan_cfg = PLANS.get(plan, PLANS["free"])
-    used     = await get_token_usage(user["user_id"])
+    plan         = user.get("plan", "free")
+    plan_cfg     = PLANS.get(plan, PLANS["free"])
+    used_tokens  = await get_token_usage(user["user_id"])
     plan_started = user.get("plan_started_at")
     expires_at   = None
     if plan_started and plan_cfg.get("expires_days"):
         expires_at = (plan_started + timedelta(days=plan_cfg["expires_days"])).isoformat()
+
+    today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+    requests_today = await requests_col.count_documents({
+        "user_id": user["user_id"],
+        "created_at": {"$gte": today_start}
+    })
 
     return {
         "id": str(user["_id"]), "name": user.get("name"), "email": user.get("email"),
@@ -616,10 +775,12 @@ async def get_me(user: dict = Depends(get_current_user)):
         "subject": user.get("subject", ""), "auth_type": user.get("auth_type", "email"),
         "course_category": user.get("course_category", ""),
         "course_level": user.get("course_level", ""),
-        "plan_started_at": plan_started.isoformat() if plan_started else None,
-        "plan_expires_at": expires_at,
-        "tokens_used_today": used,
-        "tokens_limit_today": plan_cfg["tokens_per_day"],
+        "plan_started_at":      plan_started.isoformat() if plan_started else None,
+        "plan_expires_at":      expires_at,
+        "tokens_used_today":    used_tokens,
+        "tokens_limit_today":   plan_cfg["tokens_per_day"],
+        "requests_used_today":  requests_today,
+        "requests_limit_today": plan_cfg["requests_per_day"],
         "is_admin": user.get("email") in ADMIN_EMAILS,
         "created_at": user.get("created_at", ""),
     }
@@ -639,7 +800,7 @@ async def update_profile(body: dict, user: dict = Depends(get_current_user)):
     return {"message": "Profile updated"}
 
 # ---------------------------------------------------------------------------
-# Auth — Google OAuth2
+# Google OAuth2
 # ---------------------------------------------------------------------------
 @app.get("/api/auth/google")
 async def google_login():
@@ -665,14 +826,16 @@ async def google_callback(code: str):
     async with httpx.AsyncClient() as http:
         ur = await http.get("https://www.googleapis.com/oauth2/v2/userinfo",
                             headers={"Authorization": f"Bearer {td['access_token']}"})
-    gu = ur.json()
-    email = gu.get("email", "").lower()
-    name  = gu.get("name", "")
+    gu       = ur.json()
+    email    = gu.get("email", "").lower()
+    name     = gu.get("name", "")
     existing = await users_col.find_one({"email": email})
     if existing:
         user_id   = str(existing["_id"])
         onboarded = existing.get("onboarded", False)
-        await users_col.update_one({"_id": user_id}, {"$set": {"google_id": gu.get("id"), "auth_type": "google", "updated_at": datetime.utcnow()}})
+        await users_col.update_one({"_id": user_id}, {"$set": {
+            "google_id": gu.get("id"), "auth_type": "google", "updated_at": datetime.utcnow()
+        }})
     else:
         user_id = str(uuid.uuid4())
         await users_col.insert_one({
@@ -688,7 +851,7 @@ async def google_callback(code: str):
     return RedirectResponse(f"{FRONTEND_URL}/auth/callback?token={token}&onboarded={str(onboarded).lower()}")
 
 # ---------------------------------------------------------------------------
-# Device sessions
+# Sessions
 # ---------------------------------------------------------------------------
 @app.get("/api/auth/sessions")
 async def get_sessions(user: dict = Depends(get_current_user)):
@@ -710,16 +873,13 @@ async def create_order(body: dict, user: dict = Depends(get_current_user)):
     if plan not in PLANS or plan == "free":
         raise HTTPException(400, "Invalid plan")
     current_plan = user.get("plan", "free")
-    plan_rank = {"free": 0, "basic": 1, "standard": 2, "pro": 3}
-
+    plan_rank    = {"free": 0, "basic": 1, "standard": 2, "pro": 3}
     if current_plan == plan:
-        raise HTTPException(400, f"You already have the {plan} plan active.")
+        raise HTTPException(400, f"You already have the {plan} plan.")
     if plan_rank.get(plan, 0) <= plan_rank.get(current_plan, 0):
-        raise HTTPException(400, f"You are on {current_plan} plan. Please choose a higher plan to upgrade.")
-
+        raise HTTPException(400, f"You are on {current_plan}. Choose a higher plan.")
     price_paise = PLANS[plan]["price"] * 100
-    price_paise = PLANS[plan]["price"] * 100
-    rz = razorpay.Client(auth=(RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET))
+    rz    = razorpay.Client(auth=(RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET))
     order = rz.order.create({
         "amount": price_paise, "currency": "INR",
         "receipt": f"order_{user['_id'][:8]}_{plan}",
@@ -739,12 +899,9 @@ async def verify_payment(body: dict, user: dict = Depends(get_current_user)):
         })
     except Exception:
         raise HTTPException(400, "Payment verification failed")
-
-    # Prevent duplicate payment recording
     existing = await payments_col.find_one({"razorpay_payment_id": body["razorpay_payment_id"]})
     if existing:
         return {"status": "ok", "plan": existing["plan"], "message": "already recorded"}
-
     plan = body.get("plan", "basic")
     now  = datetime.utcnow()
     await users_col.update_one({"_id": user["_id"]}, {"$set": {
@@ -755,7 +912,7 @@ async def verify_payment(body: dict, user: dict = Depends(get_current_user)):
         "user_id": str(user["_id"]), "email": user.get("email"), "name": user.get("name"),
         "plan": plan, "amount": PLANS[plan]["price"], "currency": "INR",
         "razorpay_payment_id": body["razorpay_payment_id"],
-        "razorpay_order_id": body["razorpay_order_id"],
+        "razorpay_order_id":   body["razorpay_order_id"],
         "status": "captured", "created_at": now,
     })
     return {"status": "ok", "plan": plan}
@@ -774,9 +931,8 @@ async def razorpay_webhook(request: Request):
         user_id = notes.get("user_id")
         plan    = notes.get("plan", "basic")
         if user_id:
-            now = datetime.utcnow()
             await users_col.update_one({"_id": user_id}, {"$set": {
-                "plan": plan, "plan_started_at": now,
+                "plan": plan, "plan_started_at": datetime.utcnow(),
                 "razorpay_payment_id": payment["id"],
             }})
     return {"status": "ok"}
@@ -786,19 +942,16 @@ async def razorpay_webhook(request: Request):
 # ---------------------------------------------------------------------------
 @app.get("/api/history")
 async def get_history(user: dict = Depends(get_current_user)):
-    plan = user.get("plan", "free")
-    if not PLANS.get(plan, {}).get("history", False):
+    if not PLANS.get(user.get("plan", "free"), {}).get("history", False):
         raise HTTPException(403, "Upgrade to Basic or above to access chat history.")
     sessions = await history_col.find(
-        {"user_id": user["user_id"]},
-        {"messages": 0}
+        {"user_id": user["user_id"]}, {"messages": 0}
     ).sort("created_at", -1).to_list(100)
     return serialize(sessions)
 
 @app.get("/api/history/{session_id}")
 async def get_history_session(session_id: str, user: dict = Depends(get_current_user)):
-    plan = user.get("plan", "free")
-    if not PLANS.get(plan, {}).get("history", False):
+    if not PLANS.get(user.get("plan", "free"), {}).get("history", False):
         raise HTTPException(403, "Upgrade to access chat history.")
     session = await history_col.find_one({"_id": session_id, "user_id": user["user_id"]})
     if not session:
@@ -815,20 +968,17 @@ async def delete_history_session(session_id: str, user: dict = Depends(get_curre
 # ---------------------------------------------------------------------------
 @app.get("/api/admin/stats")
 async def admin_stats(admin: dict = Depends(require_admin)):
-    users    = await users_col.find({}, {"password": 0}).sort("created_at", -1).to_list(5000)
-    payments = await payments_col.find({}).sort("created_at", -1).to_list(5000)
-    today    = today_ist()
+    users       = await users_col.find({}, {"password": 0}).sort("created_at", -1).to_list(5000)
+    payments    = await payments_col.find({}).sort("created_at", -1).to_list(5000)
+    today       = today_ist()
     usage_today = await usage_col.find({"date": today}).to_list(5000)
-
-    total_revenue = sum(p.get("amount", 0) for p in payments)
-    plan_counts   = {k: 0 for k in PLANS}
+    plan_counts = {k: 0 for k in PLANS}
     for u in users:
         p = u.get("plan", "free")
         plan_counts[p] = plan_counts.get(p, 0) + 1
-
     return serialize({
         "total_users":       len(users),
-        "total_revenue":     total_revenue,
+        "total_revenue":     sum(p.get("amount", 0) for p in payments),
         "plan_counts":       plan_counts,
         "total_payments":    len(payments),
         "active_today":      len(usage_today),
@@ -839,10 +989,10 @@ async def admin_stats(admin: dict = Depends(require_admin)):
 
 @app.get("/api/admin/users")
 async def admin_users(admin: dict = Depends(require_admin)):
-    users = await users_col.find({}, {"password": 0}).sort("created_at", -1).to_list(5000)
+    users  = await users_col.find({}, {"password": 0}).sort("created_at", -1).to_list(5000)
     result = []
     for u in users:
-        uid = str(u["_id"])
+        uid        = str(u["_id"])
         sessions   = await sessions_col.find({"user_id": uid}).to_list(10)
         used_today = await get_token_usage(uid)
         plan_cfg   = PLANS.get(u.get("plan", "free"), PLANS["free"])
@@ -855,6 +1005,7 @@ async def admin_users(admin: dict = Depends(require_admin)):
             "device_count":      len(sessions),
             "devices":           sessions,
             "tokens_used_today": used_today,
+            "tokens_limit":      plan_cfg["tokens_per_day"],
             "plan_expires_at":   expires_at,
         })
     return serialize(result)
@@ -866,7 +1017,7 @@ async def admin_payments(admin: dict = Depends(require_admin)):
 
 @app.patch("/api/admin/users/{user_id}/plan")
 async def admin_update_plan(user_id: str, body: dict, admin: dict = Depends(require_admin)):
-    plan = body.get("plan", "free")
+    plan   = body.get("plan", "free")
     update = {"plan": plan, "updated_at": datetime.utcnow()}
     if plan != "free":
         update["plan_started_at"] = datetime.utcnow()
@@ -896,11 +1047,10 @@ async def translate_to_odia(
     await check_token_limit(user, 1000)
     local_path, mime_type = save_upload(file)
     try:
-        gfile  = upload_to_gemini(local_path, mime_type)
-        model  = MODEL_PRO if mime_type.startswith("video") else MODEL_FLASH
+        gfile        = upload_to_gemini(local_path, mime_type)
+        model        = MODEL_PRO if mime_type.startswith("video") else MODEL_FLASH
         result, tokens = gemini_generate(
-            model,
-            build_translate_instruction(user),   # ← personalised
+            model, build_translate_instruction(user),
             [file_part(gfile), {"text": "Translate this content line by line into Odia as instructed."}]
         )
         await add_token_usage(user["user_id"], tokens)
@@ -919,12 +1069,11 @@ async def generate_questions(
     await check_token_limit(user, 1000)
     local_path, mime_type = save_upload(file)
     try:
-        gfile  = upload_to_gemini(local_path, mime_type)
-        model  = MODEL_PRO if mime_type.startswith("video") else MODEL_FLASH
+        gfile        = upload_to_gemini(local_path, mime_type)
+        model        = MODEL_PRO if mime_type.startswith("video") else MODEL_FLASH
         result, tokens = gemini_generate(
-            model,
-            build_questions_instruction(user),   # ← personalised
-            [file_part(gfile), {"text": f"Generate {difficulty}-difficulty practice questions from this content as instructed."}]
+            model, build_questions_instruction(user),
+            [file_part(gfile), {"text": f"Generate {difficulty}-difficulty practice questions as instructed."}]
         )
         await add_token_usage(user["user_id"], tokens)
         return {"result": result, "tokens_used": tokens}
@@ -943,7 +1092,7 @@ async def video_summary(
     if not mime_type.startswith("video"):
         os.remove(local_path); raise HTTPException(400, "Video files only.")
     try:
-        gfile  = upload_to_gemini(local_path, mime_type)
+        gfile        = upload_to_gemini(local_path, mime_type)
         result, tokens = gemini_generate(
             MODEL_PRO,
             VIDEO_SUMMARY_INSTRUCTION + build_student_context(user),
@@ -965,7 +1114,7 @@ async def chat(
         raise HTTPException(403, "Upgrade your plan to use Chat.")
     await check_token_limit(user, estimate_tokens(message) + 500)
 
-    parts = []
+    parts      = []
     local_path = None
     try:
         if file:
@@ -974,7 +1123,7 @@ async def chat(
             parts.append(file_part(gfile))
         parts.append({"text": message})
 
-        contents = []
+        contents     = []
         hist_session = None
         if session_id:
             hist_session = await history_col.find_one({"_id": session_id, "user_id": user["user_id"]})
@@ -990,31 +1139,28 @@ async def chat(
             response = gemini_client.models.generate_content(
                 model=MODEL_FLASH,
                 contents=contents,
-                config=types.GenerateContentConfig(
-                    system_instruction=build_chat_instruction(user)  # ← personalised from DB
-                ),
+                config=types.GenerateContentConfig(system_instruction=build_chat_instruction(user)),
             )
-            result = response.text
+            result      = response.text
             tokens_meta = getattr(response, "usage_metadata", None)
-            tokens = getattr(tokens_meta, "total_token_count", estimate_tokens(message + result)) if tokens_meta else estimate_tokens(message + result)
+            tokens      = getattr(tokens_meta, "total_token_count", estimate_tokens(message + result)) if tokens_meta else estimate_tokens(message + result)
         except Exception as e:
             err = str(e)
             if "503" in err or "UNAVAILABLE" in err:
-                raise HTTPException(503, "Gemini is busy right now. Please try again.")
+                raise HTTPException(503, "Gemini is busy. Please try again.")
             raise HTTPException(500, f"AI error: {err}")
 
         await add_token_usage(user["user_id"], tokens)
 
-        plan_cfg = PLANS.get(user.get("plan", "free"), PLANS["free"])
+        plan_cfg       = PLANS.get(user.get("plan", "free"), PLANS["free"])
         new_session_id = session_id
         if plan_cfg.get("history", False):
             if not session_id or not hist_session:
                 new_session_id = str(uuid.uuid4())
-                title = message[:60] + ("..." if len(message) > 60 else "")
                 await history_col.insert_one({
                     "_id":      new_session_id,
                     "user_id":  user["user_id"],
-                    "title":    title,
+                    "title":    message[:60] + ("..." if len(message) > 60 else ""),
                     "messages": [
                         {"role": "user",      "text": message, "ts": datetime.utcnow()},
                         {"role": "assistant", "text": result,  "ts": datetime.utcnow()},
@@ -1023,7 +1169,7 @@ async def chat(
                     "updated_at": datetime.utcnow(),
                 })
             else:
-                max_hist = plan_cfg.get("max_history", 50)
+                max_hist     = plan_cfg.get("max_history", 50)
                 session_msgs = hist_session.get("messages", [])
                 if len(session_msgs) >= max_hist * 2:
                     session_msgs = session_msgs[-(max_hist * 2 - 2):]
@@ -1032,10 +1178,10 @@ async def chat(
                     {"role": "assistant", "text": result,  "ts": datetime.utcnow()},
                 ])
                 await history_col.update_one({"_id": session_id}, {"$set": {
-                    "messages":   session_msgs,
-                    "updated_at": datetime.utcnow(),
+                    "messages": session_msgs, "updated_at": datetime.utcnow(),
                 }})
 
         return {"result": result, "session_id": new_session_id, "tokens_used": tokens}
     finally:
-        if local_path: os.remove(local_path)
+        if local_path:
+            os.remove(local_path)

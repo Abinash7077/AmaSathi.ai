@@ -3,18 +3,21 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
-    "build": "next build",
+    "dev": "node --max-old-space-size=4096 node_modules/next/dist/bin/next dev",
+"build": "node --max-old-space-size=4096 node_modules/next/dist/bin/next build",
     "start": "next start",
     "lint": "next lint"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.108.2",
+    "katex": "^0.17.0",
     "next": "^16.2.9",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
     "react-markdown": "^9.0.1",
-    "remark-gfm": "^3.0.1"
+    "rehype-katex": "^7.0.1",
+    "remark-gfm": "^3.0.1",
+    "remark-math": "^6.0.0"
   },
   "devDependencies": {
     "@types/node": "22.7.5",
