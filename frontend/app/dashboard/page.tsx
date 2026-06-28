@@ -68,7 +68,7 @@ if (loading || !user) return (
           const locked = PLAN_ORDER[f.plan] > userPlanLevel;
           return (
             <div key={f.href} className={`card ${locked ? "locked" : ""}`}
-              onClick={() => locked && router.push(f.href)}>
+              onClick={() => !locked && router.push(f.href)}>
               <div className="card-icon" style={{ background: `${f.color}18`, color: f.color }}>
                 {f.icon}
               </div>
