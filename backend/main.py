@@ -32,7 +32,7 @@ import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from bson import ObjectId
-
+from fastapi import BackgroundTasks
 load_dotenv()
 
 IST = ZoneInfo("Asia/Kolkata")
@@ -587,7 +587,7 @@ def get_plans():
 # Auth — Signup
 # ---------------------------------------------------------------------------
 @app.post("/api/auth/signup")
-async def signup(body: dict):
+async def signup(body: dict, background_tasks: BackgroundTasks):
     name     = body.get("name", "").strip()
     email    = body.get("email", "").strip().lower()
     password = body.get("password", "")
@@ -609,15 +609,16 @@ async def signup(body: dict):
         "razorpay_payment_id": None,
         "created_at": datetime.utcnow(), "updated_at": datetime.utcnow(),
     })
-    send_email(email, "Welcome to amasathi! 🎓", f"""
+    background_tasks.add_task(
+        send_email, email, "Welcome to amasathi! 🎓", f"""
         <div style="font-family:sans-serif;max-width:500px;margin:auto;padding:32px">
           <h2 style="color:#22c55e">ନମସ୍କାର {name}! 👋</h2>
           <p>Welcome to <strong>amasathi</strong> — your AI study friend.</p>
           <a href="{FRONTEND_URL}/onboarding" style="display:inline-block;background:#22c55e;color:#fff;padding:12px 28px;border-radius:8px;text-decoration:none;font-weight:bold;margin-top:16px">Complete Profile →</a>
-        </div>""")
+        </div>"""
+    )
     token = create_token(user_id, email)
     return {"token": token, "user": {"id": user_id, "name": name, "email": email, "plan": "free", "onboarded": False}}
-
 # ---------------------------------------------------------------------------
 # Auth — Signin
 # ---------------------------------------------------------------------------
@@ -655,8 +656,9 @@ async def signin(body: dict, request: Request):
 # ---------------------------------------------------------------------------
 # Auth — Forgot / Reset Password
 # ---------------------------------------------------------------------------
+
 @app.post("/api/auth/forgot-password")
-async def forgot_password(body: dict):
+async def forgot_password(body: dict, background_tasks: BackgroundTasks):
     email = body.get("email", "").strip().lower()
     user  = await users_col.find_one({"email": email})
     if not user or user.get("auth_type") == "google":
@@ -666,14 +668,15 @@ async def forgot_password(body: dict):
     await reset_col.delete_many({"email": email})
     await reset_col.insert_one({"token": token, "email": email, "expires_at": expires_at})
     reset_link = f"{FRONTEND_URL}/reset-password?token={token}"
-    send_email(email, "Reset your amasathi password", f"""
+    background_tasks.add_task(
+        send_email, email, "Reset your amasathi password", f"""
         <div style="font-family:sans-serif;max-width:500px;margin:auto;padding:32px">
           <h2 style="color:#22c55e">Password Reset</h2>
           <p>Click below to reset your password. Expires in <strong>1 hour</strong>.</p>
           <a href="{reset_link}" style="display:inline-block;background:#22c55e;color:#fff;padding:12px 28px;border-radius:8px;text-decoration:none;font-weight:bold;margin-top:16px">Reset Password →</a>
-        </div>""")
+        </div>"""
+    )
     return {"message": "If that email exists, a reset link has been sent."}
-
 @app.post("/api/auth/reset-password")
 async def reset_password(body: dict):
     token        = body.get("token", "")
